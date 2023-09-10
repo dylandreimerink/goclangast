@@ -18,11 +18,19 @@ func (p *ParseContext) InternBytes(b []byte) string {
 
 type Node interface {
 	GetBaseNode() *BaseNode
-	Children() []Node
 	Unmarshal(v *fastjson.Value, p *ParseContext) error
+
+	Parent() Node
+	PrevSibling() Node
+	NextSibling() Node
+	Children() []Node
+
+	setParent(n Node)
+	setPrevSibling(n Node)
+	setNextSibling(n Node)
 }
 
-func parse(b *bytes.Buffer) (*TranslationUnitDecl, error) {
+func ParseTU(b *bytes.Buffer) (*TranslationUnitDecl, error) {
 	var p fastjson.Parser
 	ctx := ParseContext{
 		strIntern: intern.New(8 * 1024),
@@ -36,6 +44,10 @@ func parse(b *bytes.Buffer) (*TranslationUnitDecl, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	linkNodes(node)
+
+	fillOmittedFields(node)
 
 	return node.(*TranslationUnitDecl), nil
 }
@@ -194,6 +206,10 @@ type BaseNode struct {
 	Loc   *Loc   `json:"loc"`
 	Range *Range `json:"range"`
 	Inner []Node `json:"inner"`
+
+	parent Node
+	prev   Node
+	next   Node
 }
 
 func (bn *BaseNode) GetBaseNode() *BaseNode {
@@ -240,6 +256,154 @@ func (bn *BaseNode) Children() []Node {
 	return bn.Inner
 }
 
+func (bn *BaseNode) Parent() Node {
+	return bn.parent
+}
+
+func (bn *BaseNode) setParent(n Node) {
+	bn.parent = n
+}
+
+func (bn *BaseNode) PrevSibling() Node {
+	return bn.prev
+}
+
+func (bn *BaseNode) setPrevSibling(n Node) {
+	bn.prev = n
+}
+
+func (bn *BaseNode) NextSibling() Node {
+	return bn.next
+}
+
+func (bn *BaseNode) setNextSibling(n Node) {
+	bn.next = n
+}
+
+func linkNodes(node Node) {
+	children := node.Children()
+	for i, child := range children {
+		if child == nil {
+			continue
+		}
+
+		child.setParent(node)
+		if i > 0 {
+			child.setPrevSibling(children[i-1])
+		}
+		if i < len(children)-1 {
+			child.setNextSibling(children[i+1])
+		}
+
+		linkNodes(child)
+	}
+}
+
+func fillOmittedFields(node Node) {
+	last := BaseNode{
+		Loc:   &Loc{},
+		Range: &Range{},
+	}
+
+	inherit := func(l *Loc) {
+		ll := last.Loc
+		if l.File == "" {
+			l.File = ll.File
+		} else {
+			ll.File = l.File
+		}
+
+		if l.Line == 0 {
+			l.Line = ll.Line
+		} else {
+			ll.Line = l.Line
+		}
+
+		if l.Col == 0 {
+			l.Col = ll.Col
+		} else {
+			ll.Col = l.Col
+		}
+	}
+
+	PreOrderVisit(node, func(n Node, depth int) error {
+		if n == nil {
+			return nil
+		}
+
+		ll := last.Loc
+		b := n.GetBaseNode()
+		if b.Loc == nil {
+			newLoc := *ll
+			b.Loc = &newLoc
+		} else {
+			inherit(b.Loc)
+		}
+
+		if b.Range == nil {
+			b.Range = &Range{}
+		}
+		r := b.Range
+
+		if r.Begin == nil {
+			r.Begin = &Loc{}
+		}
+		inherit(r.Begin)
+
+		if r.End == nil {
+			r.End = &Loc{}
+		}
+		inherit(r.End)
+
+		return nil
+	})
+}
+
+func nodeFile(n Node) string {
+	l := n.GetBaseNode().Loc
+	if l != nil {
+		if l.File != "" {
+			return l.File
+		}
+	}
+
+	r := n.GetBaseNode().Range
+	if r != nil {
+		if r.Begin.File != "" {
+			return r.Begin.File
+		}
+	}
+
+	if p := n.PrevSibling(); p != nil {
+		return nodeFile(p)
+	}
+
+	p := n.Parent()
+	if p == nil {
+		return ""
+	}
+
+	return nodeFile(p)
+}
+
+func nodeLoc(n Node) *Loc {
+	l := n.GetBaseNode().Loc
+	if l != nil {
+		return l
+	}
+
+	if p := n.PrevSibling(); p != nil {
+		return nodeLoc(p)
+	}
+
+	p := n.Parent()
+	if p == nil {
+		return nil
+	}
+
+	return nodeLoc(p)
+}
+
 func PreOrderVisit(node Node, fn func(n Node, depth int) error) {
 	preOrderVisit(node, 0, fn)
 }
@@ -255,5 +419,23 @@ func preOrderVisit(node Node, depth int, fn func(n Node, depth int) error) {
 		}
 
 		preOrderVisit(child, depth+1, fn)
+	}
+}
+
+func PostOrderVisit(node Node, fn func(n Node, depth int) error) {
+	postOrderVisit(node, 0, fn)
+}
+
+func postOrderVisit(node Node, depth int, fn func(n Node, depth int) error) {
+	for _, child := range node.Children() {
+		if child == nil {
+			continue
+		}
+
+		postOrderVisit(child, depth+1, fn)
+	}
+
+	if fn(node, depth) != nil {
+		return
 	}
 }

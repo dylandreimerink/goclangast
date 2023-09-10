@@ -28,7 +28,7 @@ func NewASTOptions(path string, opts Options) (*TranslationUnitDecl, error) {
 		return nil, fmt.Errorf("run: %v", err)
 	}
 
-	ast, err := parse(&b)
+	ast, err := ParseTU(&b)
 	if err != nil {
 		return nil, fmt.Errorf("parse: %v", err)
 	}

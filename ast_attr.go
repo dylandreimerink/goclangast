@@ -28,6 +28,7 @@ var AttrMap = map[string]func() Node{
 	"TransparentUnionAttr":     func() Node { return &TransparentUnionAttr{} },
 	"WeakAttr":                 func() Node { return &WeakAttr{} },
 	"NoInlineAttr":             func() Node { return &NoInlineAttr{} },
+	"DeprecatedAttr":           func() Node { return &DeprecatedAttr{} },
 }
 
 type AlwaysInlineAttr struct {
@@ -138,4 +139,8 @@ type ConstAttr struct {
 
 type LoopHintAttr struct {
 	AttrImplicit
+}
+
+type DeprecatedAttr struct {
+	BaseNode
 }
